@@ -1,0 +1,10 @@
+# Ignore heavy terraform binaries globally
+**/.terraform/
+*.executable
+*.tfstate
+*.tfstate.*
+
+# Ignore frontend build and dependency folders
+**/node_modules/
+**/dist/
+**/build/
