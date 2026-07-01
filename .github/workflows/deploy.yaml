@@ -1,85 +1,122 @@
-name: CI/CD Pipeline
+name: React CI/CD
 
 on:
   push:
     branches:
       - main
-    paths:
-      - 'app/**'
+  workflow_dispatch:
 
 permissions:
-  id-token: write # Required for AWS OIDC authentication
-  contents: read  # Required for actions/checkout
+  id-token: write
+  contents: read
 
 jobs:
-  validate:
-    name: Terraform Format and Validate
+  changes:
+    name: Detect Changes
     runs-on: ubuntu-latest
+
+    outputs:
+      terraform: ${{ steps.filter.outputs.terraform == 'true' || github.event_name == 'workflow_dispatch' }}
+      app: ${{ steps.filter.outputs.app == 'true' || github.event_name == 'workflow_dispatch' }}
+
     steps:
-      - name: Checkout Repository
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect Changed Files
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            terraform:
+              - 'terraform/**'
+            app:
+              - 'app/**'
+
+  terraform:
+    name: Terraform
+    needs: changes
+    if: needs.changes.outputs.terraform == 'true'
+
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: terraform
+
+    steps:
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          terraform_version: ">= 1.5.0"
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Terraform Init
+        run: terraform init
 
       - name: Terraform Format Check
         run: terraform fmt -check
-        working-directory: terraform
 
       - name: Terraform Validate
-        run: |
-          terraform init -backend=false
-          terraform validate
-        working-directory: terraform
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan              
+
 
   deploy:
-    name: Build and Deploy Application
-    needs: validate
+    name: Deploy React App
+    needs: [changes, terraform]
+
+    if: |
+      always() &&
+      needs.changes.outputs.app == 'true' &&
+      (needs.terraform.result == 'success' || needs.terraform.result == 'skipped')
+
     runs-on: ubuntu-latest
 
+    defaults:
+      run:
+        working-directory: app
+
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: 22
+          cache: npm
           cache-dependency-path: app/package-lock.json
 
-      # 3. Install dependencies
       - name: Install Dependencies
         run: npm ci
-        working-directory: app
 
       - name: Build Application
         run: npm run build
-        working-directory: app
 
-      # 4.5. Upload production build artifacts
-      - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: react-dist
-          path: app/dist/
-
-      - name: Authenticate to AWS via OIDC
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: eu-central-1
-          role-session-name: GitHubActionsWorkflow
+          aws-region: ${{ secrets.AWS_REGION }}
 
-      # 6. Upload build files to S3
-      - name: Deploy Assets to S3
+      - name: Upload to S3
         run: |
-          aws s3 sync app/dist/ s3://${{ secrets.AWS_S3_BUCKET_NAME }} --delete
+          aws s3 sync dist/ s3://${{ secrets.S3_BUCKET_NAME }} --delete
 
       - name: Invalidate CloudFront Cache
         run: |
           aws cloudfront create-invalidation \
             --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
-            --paths "/*"
+            --paths "/*"        
