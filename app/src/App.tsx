@@ -39,7 +39,7 @@ const features = [
   {
     icon: '🤖',
     colorClass: 'icon-purple',
-    title: 'AI-Powered Guidance',
+    title: 'AI-Poered Guidance',
     desc: 'Personalised recommendations and instant answers as you learn.',
   },
   {
