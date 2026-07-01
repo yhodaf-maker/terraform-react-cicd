@@ -1,9 +1,10 @@
-variable "project_name" {
+variable "aws_region" {
+  description = "AWS region to deploy resources"
   type        = string
-  description = "The name of your project/application"
+  default     = "eu-west-1"
 }
 
-variable "environment" {
+variable "bucket_name" {
+  description = "Name of the S3 buckeקt"
   type        = string
-  description = "The deployment environment (dev, stage, prod)"
 }
